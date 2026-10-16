@@ -4,13 +4,15 @@ POST /v1/embeddings
   {"input": "text" | ["text", ...] | [[{"type": "text", "text": ...},
                                         {"type": "image"|"audio"|"video", "url": ...}], ...],
    "dimensions": 128 | 256 | 512 | 768 (optional, Matryoshka truncation),
-   "prompt": "task: search result | query: " (optional, prepended / system message)}
+   "prompt": "task: search result | query: " (optional, prepended / system message),
+   "prompt_name": "query" | "document" | ... (optional, from the model's prompt catalog)}
 
 All MLX work runs on a single dedicated thread: MLX streams are thread-local.
 """
 
 import argparse
 import asyncio
+import json
 import os
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Optional, Union
@@ -21,6 +23,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
 from mlx_vlm import load
+from mlx_vlm.utils import get_model_path
 
 MODEL_ID = os.environ.get("EMBED_MODEL", "mlx-community/embeddinggemma-2-bf16")
 DIMENSIONS = (128, 256, 512, 768)
@@ -36,11 +39,16 @@ class EmbeddingsRequest(BaseModel):
     model: Optional[str] = None
     dimensions: Optional[int] = None
     prompt: Optional[str] = None
+    prompt_name: Optional[str] = None
     encoding_format: Optional[str] = "float"
 
 
 def _load():
     state["model"], state["processor"] = load(MODEL_ID)
+    catalog = get_model_path(MODEL_ID) / "config_sentence_transformers.json"
+    state["prompts"] = (
+        json.loads(catalog.read_text()).get("prompts", {}) if catalog.exists() else {}
+    )
 
 
 def _embed_text(texts: List[str]) -> mx.array:
@@ -106,13 +114,25 @@ async def health():
 
 @app.get("/v1/models")
 async def models():
-    return {"object": "list", "data": [{"id": MODEL_ID, "object": "model"}]}
+    return {
+        "object": "list",
+        "data": [{"id": MODEL_ID, "object": "model", "prompts": state["prompts"]}],
+    }
 
 
 @app.post("/v1/embeddings")
 async def embeddings(req: EmbeddingsRequest):
     if req.dimensions is not None and req.dimensions not in DIMENSIONS:
         raise HTTPException(400, f"`dimensions` must be one of {DIMENSIONS}.")
+    if req.prompt_name is not None:
+        if req.prompt is not None:
+            raise HTTPException(400, "Pass either `prompt` or `prompt_name`, not both.")
+        if req.prompt_name not in state["prompts"]:
+            raise HTTPException(
+                400,
+                f"Unknown `prompt_name`; expected one of {sorted(state['prompts'])}.",
+            )
+        req.prompt = state["prompts"][req.prompt_name]
     try:
         loop = asyncio.get_running_loop()
         vectors, tokens = await loop.run_in_executor(executor, _run, req)

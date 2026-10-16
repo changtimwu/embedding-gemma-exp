@@ -19,7 +19,8 @@ OpenAI-compatible `/v1/embeddings` server for `mlx-community/embeddinggemma-2-bf
 - `input`: string, list of strings, or list items that are content-part lists
   (`text` / `image` / `audio` / `video` with `url` = local path or URL).
 - `prompt` (optional): task prefix, e.g. `task: search result | query: ` for queries,
-  `title: none | text: ` for documents. Use the same `dimensions` for queries and docs.
+  `title: none | text: ` for documents. Or use `prompt_name` (`query`, `document`,
+  `STS`, `Classification`, ... — full catalog at `GET /v1/models`); unknown names are a 400. Use the same `dimensions` for queries and docs.
 - `dimensions` (optional): 128/256/512/768 Matryoshka truncation, re-normalized.
 
 Why not `python -m mlx_vlm.server --embedding-model ...`? In mlx-vlm 0.7.8 its
